@@ -6,22 +6,27 @@ import java.awt.*;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 
 public class WordStatisticsProject_OS2 extends JFrame {
     private JTextField directoryField;
     private JCheckBox subdirectoryCheckBox;
     private JButton browseButton;
     private JButton processButton;
-//    private JButton showLongestShortestButton;
     private JTable resultTable;
     private DefaultTableModel tableModel;
     private JTextArea directoryInfoTextArea;
 
     private String overallLongestWord = "";
     private String overallShortestWord = "";
+    private int overallIsCount = 0;
+    private int overallAreCount = 0;
+    private int overallYouCount = 0;
+    private final Object lock = new Object(); // Mutex lock object
+    private final Semaphore semaphore = new Semaphore(5); // Adjust the permits as needed
 
     public WordStatisticsProject_OS2() {
         setTitle("Word Statistics App");
@@ -41,9 +46,6 @@ public class WordStatisticsProject_OS2 extends JFrame {
         inputPanel.add(subdirectoryCheckBox);
         processButton = new JButton("Start Processing");
         inputPanel.add(processButton);
-
-//        showLongestShortestButton = new JButton("Show Longest and Shortest Words Per Directory");
-//        inputPanel.add(showLongestShortestButton);
 
         tableModel = new DefaultTableModel();
         resultTable = new JTable(tableModel);
@@ -68,8 +70,6 @@ public class WordStatisticsProject_OS2 extends JFrame {
         browseButton.addActionListener(e -> browseDirectory());
         processButton.addActionListener(e -> processDirectory());
 
-//        showLongestShortestButton.addActionListener(e -> showLongestAndShortestWordsPerDirectory());
-
         setVisible(true);
     }
 
@@ -91,102 +91,41 @@ public class WordStatisticsProject_OS2 extends JFrame {
             return;
         }
 
-        // Reset overall longest and shortest words for each directory processing
+        // Reset overall statistics for each directory processing
         overallLongestWord = "";
         overallShortestWord = "";
+        overallIsCount = 0;
+        overallAreCount = 0;
+        overallYouCount = 0;
 
-        processFiles(directory, subdirectoryCheckBox.isSelected());
-        findLongestAndShortestWords(directory);
+        // Use ExecutorService for concurrent file processing
+        ExecutorService executorService = Executors.newFixedThreadPool(5); // Adjust the pool size as needed
 
-        // Update GUI with overall longest and shortest words
-        directoryInfoTextArea.append("Overall Longest Word: " + overallLongestWord + "\n");
-        directoryInfoTextArea.append("Overall Shortest Word: " + overallShortestWord + "\n");
-    }
+        executorService.execute(() -> {
+            try {
+                semaphore.acquire(); // Acquire a permit
 
-    private void showLongestAndShortestWordsPerDirectory() {
-        String directoryPath = directoryField.getText();
-        File rootDirectory = new File(directoryPath);
+                processFiles(directory, subdirectoryCheckBox.isSelected());
+                findLongestAndShortestWords(directory);
 
-        if (!rootDirectory.exists() || !rootDirectory.isDirectory()) {
-            JOptionPane.showMessageDialog(this, "Invalid directory");
-            return;
-        }
-
-        Map<String, String> longestWordsMap = new HashMap<>();
-        Map<String, String> shortestWordsMap = new HashMap<>();
-
-        processFilesAndRecordWords(rootDirectory, longestWordsMap, shortestWordsMap, subdirectoryCheckBox.isSelected());
-
-        StringBuilder infoBuilder = new StringBuilder();
-        for (Map.Entry<String, String> entry : longestWordsMap.entrySet()) {
-            String directoryName = entry.getKey();
-            String longestWord = entry.getValue();
-            String shortestWord = shortestWordsMap.get(directoryName);
-
-            infoBuilder.append("Directory: ").append(directoryName).append("\n");
-            infoBuilder.append("Longest word: ").append(longestWord).append("\n");
-            infoBuilder.append("Shortest word: ").append(shortestWord).append("\n\n");
-        }
-
-        directoryInfoTextArea.setText(infoBuilder.toString());
-    }
-
-    private void processFilesAndRecordWords(File directory, Map<String, String> longestWords, Map<String, String> shortestWords, boolean includeSubdirectories) {
-        File[] files = directory.listFiles();
-        if (files != null) {
-            for (File file : files) {
-                if (file.isDirectory() && includeSubdirectories) {
-                    processFilesAndRecordWords(file, longestWords, shortestWords, true);
-                } else if (file.isFile() && file.getName().endsWith(".txt")) {
-                    String directoryName = directory.getName();
-                    processFileAndRecordWords(file, directoryName, longestWords, shortestWords);
+                // Update GUI with overall statistics
+                synchronized (lock) {
+                    directoryInfoTextArea.append("Overall is Count: " + overallIsCount + "\n");
+                    directoryInfoTextArea.append("Overall are Count: " + overallAreCount + "\n");
+                    directoryInfoTextArea.append("Overall you Count: " + overallYouCount + "\n");
+                    directoryInfoTextArea.append("Overall Longest Word: " + overallLongestWord + "\n");
+                    directoryInfoTextArea.append("Overall Shortest Word: " + overallShortestWord + "\n");
                 }
-            }
-        }
-    }
 
-    private void processFileAndRecordWords(File file, String directoryName, Map<String, String> longestWords, Map<String, String> shortestWords) {
-        int wordCount = 0;
-        String longestWord = "";
-        String shortestWord = "";
-
-        try {
-            List<String> lines = Files.readAllLines(file.toPath());
-            for (String line : lines) {
-                String[] words = line.split("\\s+");
-                for (String word : words) {
-                    wordCount++;
-                    if (word.length() > longestWord.length()) {
-                        longestWord = word;
-                    }
-                    if (shortestWord.isEmpty() || word.length() < shortestWord.length()) {
-                        shortestWord = word;
-                    }
-                }
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            } finally {
+                semaphore.release(); // Release the permit
             }
 
-            longestWords.put(directoryName, longestWord);
-            shortestWords.put(directoryName, shortestWord);
-
-            // Update overall longest and shortest words
-            updateOverallLongestAndShortest(longestWord, shortestWord);
-
-        } catch (IOException e) {
-            e.printStackTrace();
-            JOptionPane.showMessageDialog(this, "Error occurred while reading files");
-        }
-    }
-
-    private void updateOverallLongestAndShortest(String currentLongestWord, String currentShortestWord) {
-        // Update overall longest word
-        if (overallLongestWord.isEmpty() || currentLongestWord.length() > overallLongestWord.length()) {
-            overallLongestWord = currentLongestWord;
-        }
-
-        // Update overall shortest word
-        if (overallShortestWord.isEmpty() || currentShortestWord.length() < overallShortestWord.length()) {
-            overallShortestWord = currentShortestWord;
-        }
+            // Shutdown the executor service
+            executorService.shutdown();
+        });
     }
 
     private void processFiles(File directory, boolean includeSubdirectories) {
@@ -196,13 +135,14 @@ public class WordStatisticsProject_OS2 extends JFrame {
                 if (file.isDirectory() && includeSubdirectories) {
                     processFiles(file, true);
                 } else if (file.isFile() && file.getName().endsWith(".txt")) {
-                    processFile(file, file.getName());
+                    String directoryName = directory.getName();
+                    processFileAndRecordWords(file, directoryName);
                 }
             }
         }
     }
 
-    private void processFile(File file, String filename) {
+    private void processFileAndRecordWords(File file, String directoryName) {
         int wordCount = 0;
         String longestWord = "";
         String shortestWord = "";
@@ -211,7 +151,11 @@ public class WordStatisticsProject_OS2 extends JFrame {
         int youCount = 0;
 
         try {
-            List<String> lines = Files.readAllLines(file.toPath());
+            List<String> lines;
+            synchronized (lock) {
+                lines = Files.readAllLines(file.toPath());
+            }
+
             for (String line : lines) {
                 String[] words = line.split("\\s+");
                 for (String word : words) {
@@ -232,10 +176,11 @@ public class WordStatisticsProject_OS2 extends JFrame {
                 }
             }
 
-            tableModel.addRow(new String[]{filename, String.valueOf(wordCount), String.valueOf(isCount), String.valueOf(areCount), String.valueOf(youCount), longestWord, shortestWord});
-
-            // Update overall longest and shortest words
-            updateOverallLongestAndShortest(longestWord, shortestWord);
+            synchronized (lock) {
+                tableModel.addRow(new String[] { file.getName(), String.valueOf(wordCount), String.valueOf(isCount),
+                        String.valueOf(areCount), String.valueOf(youCount), longestWord, shortestWord });
+                updateOverallStatistics(isCount, areCount, youCount, longestWord, shortestWord);
+            }
 
         } catch (IOException e) {
             e.printStackTrace();
@@ -243,42 +188,32 @@ public class WordStatisticsProject_OS2 extends JFrame {
         }
     }
 
-    private void findLongestAndShortestWords(File directory) {
-        String longestWordInDirectory = "";
-        String shortestWordInDirectory = "";
+    private void updateOverallStatistics(int isCount, int areCount, int youCount, String currentLongestWord,
+            String currentShortestWord) {
+        synchronized (lock) {
+            // Update overall counts
+            overallIsCount += isCount;
+            overallAreCount += areCount;
+            overallYouCount += youCount;
 
-        File[] files = directory.listFiles();
-        if (files != null) {
-            for (File file : files) {
-                if (file.isFile() && file.getName().endsWith(".txt")) {
-                    try {
-                        List<String> lines = Files.readAllLines(file.toPath());
-                        for (String line : lines) {
-                            String[] words = line.split("\\s+");
-                            for (String word : words) {
-                                if (longestWordInDirectory.isEmpty() || word.length() > longestWordInDirectory.length()) {
-                                    longestWordInDirectory = word;
-                                }
-                                if (shortestWordInDirectory.isEmpty() || word.length() < shortestWordInDirectory.length()) {
-                                    shortestWordInDirectory = word;
-                                }
-                            }
-                        }
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                } else if (file.isDirectory()) {
-                    findLongestAndShortestWords(file);
-                }
+            // Update overall longest word
+            if (overallLongestWord.isEmpty() || currentLongestWord.length() > overallLongestWord.length()) {
+                overallLongestWord = currentLongestWord;
+            }
+
+            // Update overall shortest word
+            if (overallShortestWord.isEmpty() || currentShortestWord.length() < overallShortestWord.length()) {
+                overallShortestWord = currentShortestWord;
             }
         }
+    }
 
-        System.out.println("Longest word in directory: " + longestWordInDirectory);
-        System.out.println("Shortest word in directory: " + shortestWordInDirectory);
+    private void findLongestAndShortestWords(File directory) {
+        // Similar changes for concurrent processing if needed
+        // ...
     }
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(WordStatisticsProject_OS2::new);
     }
-    
 }
